@@ -18,6 +18,7 @@ using Microsoft.OData.Service.Sample.Trippin.Extension;
 using Microsoft.OData.Service.Sample.Trippin.Models;
 using Microsoft.Restier.Core;
 using Microsoft.Restier.Core.Model;
+using Microsoft.Restier.Core.Query;
 using Microsoft.Restier.Core.Submit;
 using Microsoft.Restier.Providers.EntityFramework;
 using Microsoft.Restier.Publishers.OData.Model;
@@ -579,7 +580,9 @@ namespace Microsoft.OData.Service.Sample.Trippin.Api
                 .AddSingleton<ODataPayloadValueConverter, CustomizedPayloadValueConverter>()
                 .AddSingleton<ODataValidationSettings>(validationSettingFactory)
                 .AddSingleton<IODataPathHandler, PathAndSlashEscapeODataPathHandler>()
+                .AddSingleton<IQueryExpressionAuthorizer, CustomizedQueryExpressionAuthorizer>()
                 .AddService<IChangeSetItemProcessor, CustomizedSubmitProcessor>()
+                .AddService<IChangeSetItemAuthorizer, CustomizedSubmitAuthorizer>()
                 .AddService<IModelBuilder, TrippinModelCustomizer>();
         }
 
