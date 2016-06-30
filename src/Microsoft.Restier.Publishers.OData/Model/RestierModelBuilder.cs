@@ -2,57 +2,103 @@
 // Licensed under the MIT License.  See License.txt in the project root for license information.
 
 using System.Linq;
-using System.Reflection;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.OData.Builder;
 using Microsoft.OData.Edm;
 using Microsoft.OData.Edm.Library;
+using Microsoft.Restier.Core;
 using Microsoft.Restier.Core.Model;
 
 namespace Microsoft.Restier.Publishers.OData.Model
 {
     /// <summary>
-    /// This is a RESTier model build which retrieve information from providers like entity framework provider,
-    /// then build entity set and entity type based on retrieved information.
+    /// This class will build the Edm model for OData service, user can extend this method to add more entity type
+    /// or entity set or operation, then add it as Singleton DI service.
     /// </summary>
-    internal class RestierModelBuilder : IModelBuilder
+    public class RestierModelBuilder : IModelBuilder
     {
-        public IModelBuilder InnerModelBuilder { get; set; }
+        /// <summary>
+        /// Gets or sets namespace which will be used by all elements within the model.
+        /// </summary>
+        public string Namespace { get; set; }
 
         /// <inheritdoc/>
-        public async Task<IEdmModel> GetModelAsync(ModelContext context, CancellationToken cancellationToken)
+        public virtual Task<IEdmModel> GetModelAsync(ModelContext context, CancellationToken cancellationToken)
         {
-            // This means user build a model with customized model builder registered as inner most
-            // Its element will be added to built model.
-            IEdmModel innerModel = null;
-            if (InnerModelBuilder != null)
+            // Prepare for model build, now mainly for provider to collect information
+            var modelPreparer = context.GetApiService<IModelPreparer>();
+            if (modelPreparer != null)
             {
-                innerModel = await InnerModelBuilder.GetModelAsync(context, cancellationToken);
+                modelPreparer.PrepareModelAsync(context, cancellationToken);
             }
 
+<<<<<<< d164004a31b633cddb70cd798925235cabf4fcd4
             var entitySetTypeMap = context.ResourceSetTypeMap;
             if (entitySetTypeMap == null || entitySetTypeMap.Count == 0)
-            {
-                return innerModel;
-            }
-
-            // Collection of entity type and set name is set by EF now,
-            // and EF model producer will not build model any more
-            // Web Api OData conversion model built is been used here,
-            // refer to Web Api OData document for the detail conversions been used for model built.
+=======
+            // Call some service to have provider set required information into ModelContext
             var builder = new ODataConventionModelBuilder();
 
-            // This namespace is used by container
-            builder.Namespace = entitySetTypeMap.First().Value.Namespace;
+            if (Namespace != null)
+>>>>>>> Temp design, not ready for push yet
+            {
+                builder.Namespace = Namespace;
+            }
 
-            MethodInfo method = typeof(ODataConventionModelBuilder)
-                .GetMethod("EntitySet", BindingFlags.Public | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
+            BuildEntityTypeEntitySetModel(context, builder);
+            BuildOperationModel(context, builder);
+
+            if (Namespace != null)
+            {
+                // reset entity type namespace which by default is clr class namespace
+                foreach (var type in builder.StructuralTypes)
+                {
+                    type.Namespace = Namespace;
+                }
+
+                foreach (var type in builder.EnumTypes)
+                {
+                    type.Namespace = Namespace;
+                }
+            }
+
+            // For ODataConversionModelBuilder, when auto binding navigation property,
+            // navigation property CLR type can only have one related entity set,
+            // or the binding will throw exception.
+            // The code here will workaround this issue to binding to first entity set.
+            foreach (var navigationSource in builder.NavigationSources)
+            {
+                builder.AddNavigationPropertyBinding(navigationSource);
+            }
+
+            return Task.FromResult(builder.GetEdmModel());
+        }
+
+        /// <summary>
+        /// This can be override by sub class to add more entity type/entity set into the model via
+        /// ODataConventionModelBuilder.
+        /// </summary>
+        /// <param name="context">The context for model builder</param>
+        /// <param name="builder">The ODataConventionModelBuilder used to add more elements.</param>
+        public virtual void BuildEntityTypeEntitySetModel(ModelContext context, ODataConventionModelBuilder builder)
+        {
+            if (context == null)
+            {
+                return;
+            }
+
+            var entitySetTypeMap = context.EntitySetTypeMap;
+            if (entitySetTypeMap == null || entitySetTypeMap.Count == 0)
+            {
+                return;
+            }
 
             foreach (var pair in entitySetTypeMap)
             {
                 // Build a method with the specific type argument
-                var specifiedMethod = method.MakeGenericMethod(pair.Value);
+                var specifiedMethod = EdmHelpers.EntitySetMethod.MakeGenericMethod(pair.Value);
                 var parameters = new object[]
                 {
                       pair.Key
@@ -82,66 +128,25 @@ namespace Microsoft.Restier.Publishers.OData.Model
 
                 entityTypeKeyPropertiesMap.Clear();
             }
+        }
 
-            var model = (EdmModel)builder.GetEdmModel();
+        /// <summary>
+        /// This can be override by sub class to add more operation into the model via ODataConventionModelBuilder.
+        /// </summary>
+        /// <param name="context">The context for model builder</param>
+        /// <param name="builder">The ODataConventionModelBuilder used to add more operation.</param>
+        public virtual void BuildOperationModel(ModelContext context, ODataConventionModelBuilder builder)
+        {
+            var apiType = context.GetApiService<ApiBase>().GetType();
 
-            // Add all Inner model content into existing model
-            // When WebApi OData make conversion model builder accept an existing model, this can be removed.
-            if (innerModel != null)
-            {
-                foreach (var element in innerModel.SchemaElements)
-                {
-                    if (!(element is EdmEntityContainer))
-                    {
-                        model.AddElement(element);
-                    }
-                }
+            // Build entity set and singleton defined in Api class...
+            var modelExtender = context.GetApiService<RestierModelExtender>();
+            modelExtender.ScanForDeclaredPublicProperties();
+            modelExtender.BuildEntitySetsAndSingletons(context, builder);
 
-                foreach (var annotation in innerModel.VocabularyAnnotations)
-                {
-                    model.AddVocabularyAnnotation(annotation);
-                }
-
-                var entityContainer = (EdmEntityContainer)model.EntityContainer;
-                var innerEntityContainer = (EdmEntityContainer)innerModel.EntityContainer;
-                if (innerEntityContainer != null)
-                {
-                    foreach (var entityset in innerEntityContainer.EntitySets())
-                    {
-                        if (entityContainer.FindEntitySet(entityset.Name) == null)
-                        {
-                            entityContainer.AddEntitySet(entityset.Name, entityset.EntityType());
-                        }
-                    }
-
-                    foreach (var singleton in innerEntityContainer.Singletons())
-                    {
-                        if (entityContainer.FindEntitySet(singleton.Name) == null)
-                        {
-                            entityContainer.AddSingleton(singleton.Name, singleton.EntityType());
-                        }
-                    }
-
-                    foreach (var operation in innerEntityContainer.OperationImports())
-                    {
-                        if (entityContainer.FindOperationImports(operation.Name) == null)
-                        {
-                            if (operation.IsFunctionImport())
-                            {
-                                entityContainer.AddFunctionImport(
-                                    operation.Name, (EdmFunction)operation.Operation, operation.EntitySet);
-                            }
-                            else
-                            {
-                                entityContainer.AddActionImport(
-                                    operation.Name, (EdmAction)operation.Operation, operation.EntitySet);
-                            }
-                        }
-                    }
-                }
-            }
-
-            return model;
+            // Build operation defined in Api class.
+            var operationBuilder = new RestierOperationModelBuilder(apiType);
+            operationBuilder.BuildModelForOperation(builder);
         }
     }
 }

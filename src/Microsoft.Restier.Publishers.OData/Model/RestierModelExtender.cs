@@ -8,6 +8,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Web.OData.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OData.Edm;
 using Microsoft.OData.Edm.Library;
@@ -27,15 +28,8 @@ namespace Microsoft.Restier.Publishers.OData.Model
         private readonly ICollection<PropertyInfo> publicProperties = new List<PropertyInfo>();
         private readonly ICollection<PropertyInfo> entitySetProperties = new List<PropertyInfo>();
         private readonly ICollection<PropertyInfo> singletonProperties = new List<PropertyInfo>();
-        private readonly ICollection<EdmNavigationSource> addedNavigationSources = new List<EdmNavigationSource>();
 
-        private readonly IDictionary<IEdmEntityType, IEdmEntitySet[]> entitySetCache =
-            new Dictionary<IEdmEntityType, IEdmEntitySet[]>();
-
-        private readonly IDictionary<IEdmEntityType, IEdmSingleton[]> singletonCache =
-            new Dictionary<IEdmEntityType, IEdmSingleton[]>();
-
-        private RestierModelExtender(Type targetType)
+        internal RestierModelExtender(Type targetType)
         {
             this.targetType = targetType;
         }
@@ -51,10 +45,89 @@ namespace Microsoft.Restier.Publishers.OData.Model
             // some other services.
             services.AddSingleton(new RestierModelExtender(targetType));
 
-            services.AddService<IModelBuilder, ModelBuilder>();
             services.AddService<IModelMapper, ModelMapper>();
             services.AddService<IQueryExpressionExpander, QueryExpressionExpander>();
             services.AddService<IQueryExpressionSourcer, QueryExpressionSourcer>();
+        }
+
+        internal void ScanForDeclaredPublicProperties()
+        {
+            var currentType = this.targetType;
+            while (currentType != null && currentType != typeof(ApiBase))
+            {
+                var publicPropertiesDeclaredOnCurrentType = currentType.GetProperties(
+                    BindingFlags.Public |
+                    BindingFlags.Static |
+                    BindingFlags.Instance |
+                    BindingFlags.DeclaredOnly);
+
+                foreach (var property in publicPropertiesDeclaredOnCurrentType)
+                {
+                    if (property.CanRead &&
+                        publicProperties.All(p => p.Name != property.Name))
+                    {
+                        publicProperties.Add(property);
+                    }
+                }
+
+                currentType = currentType.BaseType;
+            }
+        }
+
+        internal void BuildEntitySetsAndSingletons(ModelContext context, ODataConventionModelBuilder builder)
+        {
+            var configuration = context.ApiContext.Configuration;
+            foreach (var property in this.publicProperties)
+            {
+                if (configuration.IsPropertyIgnored(property.Name))
+                {
+                    continue;
+                }
+
+                var isEntitySet = IsEntitySetProperty(property);
+                if (!isEntitySet)
+                {
+                    if (!IsSingletonProperty(property))
+                    {
+                        continue;
+                    }
+                }
+
+                var propertyType = property.PropertyType;
+                if (isEntitySet)
+                {
+                    propertyType = propertyType.GetGenericArguments()[0];
+                }
+
+                var typeConfiguration = builder.GetTypeConfigurationOrNull(propertyType);
+                if (typeConfiguration == null)
+                {
+                    // The type must be added before singleton or entity set
+                    // Property like DbContext, ApiContext will be ignored here
+                    continue;
+                }
+
+                if (isEntitySet)
+                {
+                    var specifiedMethod = EdmHelpers.EntitySetMethod.MakeGenericMethod(propertyType);
+                    var parameters = new object[]
+                    {
+                            property.Name
+                    };
+
+                    specifiedMethod.Invoke(builder, parameters);
+                }
+                else
+                {
+                    var specifiedMethod = EdmHelpers.SingletonMethod.MakeGenericMethod(propertyType);
+                    var parameters = new object[]
+                    {
+                            property.Name
+                    };
+
+                    specifiedMethod.Invoke(builder, parameters);
+                }
+            }
         }
 
         private static bool IsEntitySetProperty(PropertyInfo property)
@@ -151,202 +224,6 @@ namespace Microsoft.Restier.Publishers.OData.Model
             }
 
             return null;
-        }
-
-        private void ScanForDeclaredPublicProperties()
-        {
-            var currentType = this.targetType;
-            while (currentType != null && currentType != typeof(ApiBase))
-            {
-                var publicPropertiesDeclaredOnCurrentType = currentType.GetProperties(
-                    BindingFlags.Public |
-                    BindingFlags.Static |
-                    BindingFlags.Instance |
-                    BindingFlags.DeclaredOnly);
-
-                foreach (var property in publicPropertiesDeclaredOnCurrentType)
-                {
-                    if (property.CanRead &&
-                        publicProperties.All(p => p.Name != property.Name))
-                    {
-                        publicProperties.Add(property);
-                    }
-                }
-
-                currentType = currentType.BaseType;
-            }
-        }
-
-        private void BuildEntitySetsAndSingletons(ModelContext context, EdmModel model)
-        {
-            var configuration = context.ApiContext.Configuration;
-            foreach (var property in this.publicProperties)
-            {
-                if (configuration.IsPropertyIgnored(property.Name))
-                {
-                    continue;
-                }
-
-                var isEntitySet = IsEntitySetProperty(property);
-                if (!isEntitySet)
-                {
-                    if (!IsSingletonProperty(property))
-                    {
-                        continue;
-                    }
-                }
-
-                var propertyType = property.PropertyType;
-                if (isEntitySet)
-                {
-                    propertyType = propertyType.GetGenericArguments()[0];
-                }
-
-                var entityType = model.FindDeclaredType(propertyType.FullName) as IEdmEntityType;
-                if (entityType == null)
-                {
-                    // Skip property whose entity type has not been declared yet.
-                    continue;
-                }
-
-                var container = model.EnsureEntityContainer(this.targetType);
-                if (isEntitySet)
-                {
-                    if (container.FindEntitySet(property.Name) == null)
-                    {
-                        this.entitySetProperties.Add(property);
-                        var addedEntitySet = container.AddEntitySet(property.Name, entityType);
-                        this.addedNavigationSources.Add(addedEntitySet);
-                    }
-                }
-                else
-                {
-                    if (container.FindSingleton(property.Name) == null)
-                    {
-                        this.singletonProperties.Add(property);
-                        var addedSingleton = container.AddSingleton(property.Name, entityType);
-                        this.addedNavigationSources.Add(addedSingleton);
-                    }
-                }
-            }
-        }
-
-        private IEdmEntitySet[] GetMatchingEntitySets(IEdmEntityType entityType, IEdmModel model)
-        {
-            IEdmEntitySet[] matchingEntitySets;
-            if (!entitySetCache.TryGetValue(entityType, out matchingEntitySets))
-            {
-                matchingEntitySets =
-                    model.EntityContainer.EntitySets().Where(s => s.EntityType() == entityType).ToArray();
-                entitySetCache.Add(entityType, matchingEntitySets);
-            }
-
-            return matchingEntitySets;
-        }
-
-        private IEdmSingleton[] GetMatchingSingletons(IEdmEntityType entityType, IEdmModel model)
-        {
-            IEdmSingleton[] matchingSingletons;
-            if (!singletonCache.TryGetValue(entityType, out matchingSingletons))
-            {
-                matchingSingletons =
-                    model.EntityContainer.Singletons().Where(s => s.EntityType() == entityType).ToArray();
-                singletonCache.Add(entityType, matchingSingletons);
-            }
-
-            return matchingSingletons;
-        }
-
-        private void AddNavigationPropertyBindings(IEdmModel model)
-        {
-            // Only add navigation property bindings for the navigation sources added by this builder.
-            foreach (var navigationSource in this.addedNavigationSources)
-            {
-                var sourceEntityType = navigationSource.EntityType();
-                foreach (var navigationProperty in sourceEntityType.NavigationProperties())
-                {
-                    var targetEntityType = navigationProperty.ToEntityType();
-                    var matchingEntitySets = this.GetMatchingEntitySets(targetEntityType, model);
-                    IEdmNavigationSource targetNavigationSource = null;
-                    if (navigationProperty.Type.IsCollection())
-                    {
-                        // Collection navigation property can only bind to entity set.
-                        if (matchingEntitySets.Length == 1)
-                        {
-                            targetNavigationSource = matchingEntitySets[0];
-                        }
-                    }
-                    else
-                    {
-                        // Singleton navigation property can bind to either entity set or singleton.
-                        var matchingSingletons = this.GetMatchingSingletons(targetEntityType, model);
-                        if (matchingEntitySets.Length == 1 && matchingSingletons.Length == 0)
-                        {
-                            targetNavigationSource = matchingEntitySets[0];
-                        }
-                        else if (matchingEntitySets.Length == 0 && matchingSingletons.Length == 1)
-                        {
-                            targetNavigationSource = matchingSingletons[0];
-                        }
-                    }
-
-                    if (targetNavigationSource != null)
-                    {
-                        navigationSource.AddNavigationTarget(navigationProperty, targetNavigationSource);
-                    }
-                }
-            }
-        }
-
-        internal class ModelBuilder : IModelBuilder
-        {
-            public ModelBuilder(RestierModelExtender modelCache)
-            {
-                ModelCache = modelCache;
-            }
-
-            public IModelBuilder InnerModelBuilder { get; private set; }
-
-            private RestierModelExtender ModelCache { get; set; }
-
-            /// <inheritdoc/>
-            public async Task<IEdmModel> GetModelAsync(ModelContext context, CancellationToken cancellationToken)
-            {
-                Ensure.NotNull(context, "context");
-
-                IEdmModel modelReturned = await GetModelReturnedByInnerHandlerAsync(context, cancellationToken);
-                if (modelReturned == null)
-                {
-                    // There is no model returned so return an empty model.
-                    var emptyModel = new EdmModel();
-                    emptyModel.EnsureEntityContainer(ModelCache.targetType);
-                    return emptyModel;
-                }
-
-                EdmModel edmModel = modelReturned as EdmModel;
-                if (edmModel == null)
-                {
-                    // The model returned is not an EDM model.
-                    return modelReturned;
-                }
-
-                ModelCache.ScanForDeclaredPublicProperties();
-                ModelCache.BuildEntitySetsAndSingletons(context, edmModel);
-                ModelCache.AddNavigationPropertyBindings(edmModel);
-                return edmModel;
-            }
-
-            private async Task<IEdmModel> GetModelReturnedByInnerHandlerAsync(
-                ModelContext context, CancellationToken cancellationToken)
-            {
-                var innerHandler = InnerModelBuilder;
-                if (innerHandler != null)
-                {
-                    return await innerHandler.GetModelAsync(context, cancellationToken);
-                }
-
-                return null;
-            }
         }
 
         internal class ModelMapper : IModelMapper

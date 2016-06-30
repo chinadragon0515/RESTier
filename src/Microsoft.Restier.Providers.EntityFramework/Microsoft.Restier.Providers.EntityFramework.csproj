@@ -70,7 +70,7 @@
     </Compile>
     <Compile Include="EntityFrameworkApi.cs" />
     <Compile Include="Model\ModelMapper.cs" />
-    <Compile Include="Model\ModelProducer.cs" />
+    <Compile Include="Model\ModelPreparer.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Query\QueryExecutor.cs" />
     <Compile Include="Query\QueryExpressionProcessor.cs" />

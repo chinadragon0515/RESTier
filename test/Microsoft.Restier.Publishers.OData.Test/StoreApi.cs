@@ -12,35 +12,16 @@ using Microsoft.Restier.Core;
 using Microsoft.Restier.Core.Model;
 using Microsoft.Restier.Core.Query;
 using Microsoft.Restier.Core.Submit;
+using Microsoft.Restier.Publishers.OData.Model;
 
 namespace Microsoft.Restier.Publishers.OData.Test
 {
-    internal static class StoreModel
-    {
-        public static EdmModel Model { get; private set; }
-
-        public static IEdmEntityType Product { get; private set; }
-
-        static StoreModel()
-        {
-            var builder = new ODataConventionModelBuilder();
-            builder.Namespace = "Microsoft.Restier.Publishers.OData.Test";
-            builder.EntitySet<Product>("Products");
-            builder.EntitySet<Customer>("Customers");
-            builder.EntitySet<Store>("Stores");
-            builder.Function("GetBestProduct").ReturnsFromEntitySet<Product>("Products");
-            builder.Action("RemoveWorstProduct").ReturnsFromEntitySet<Product>("Products");
-            Model = (EdmModel)builder.GetEdmModel();
-            Product = (IEdmEntityType)Model.FindType("Microsoft.Restier.Publishers.OData.Test.Product");
-        }
-    }
-
     internal class StoreApi : ApiBase
     {
         protected override IServiceCollection ConfigureApi(IServiceCollection services)
         {
             services = base.ConfigureApi(services);
-            services.AddService<IModelBuilder>((sp, next) => new TestModelProducer(StoreModel.Model));
+            services.AddSingleton<IModelBuilder>(new TestModelProducer2());
             services.AddService<IModelMapper>((sp, next) => new TestModelMapper());
             services.AddService<IQueryExpressionSourcer>((sp, next) => new TestQueryExpressionSourcer());
             services.AddService<IChangeSetInitializer>((sp, next) => new TestChangeSetInitializer());
@@ -109,21 +90,28 @@ namespace Microsoft.Restier.Publishers.OData.Test
         }
     }
 
-    class TestModelProducer : IModelBuilder
+    class TestModelProducer : RestierModelBuilder
     {
-        private EdmModel model;
-
-        public TestModelProducer(EdmModel model)
+        public override void BuildEntityTypeEntitySetModel(ModelContext context, ODataConventionModelBuilder builder)
         {
-            this.model = model;
-        }
-
-        public Task<IEdmModel> GetModelAsync(ModelContext context, CancellationToken cancellationToken)
-        {
-            return Task.FromResult<IEdmModel>(model);
+            base.BuildEntityTypeEntitySetModel(context, builder);
+            builder.EntitySet<Order>("Orders");
+            builder.EntitySet<Person>("People");
         }
     }
 
+    class TestModelProducer2 : RestierModelBuilder
+    {
+        public override void BuildEntityTypeEntitySetModel(ModelContext context, ODataConventionModelBuilder builder)
+        {
+            base.BuildEntityTypeEntitySetModel(context, builder);
+            builder.EntitySet<Product>("Products");
+            builder.EntitySet<Customer>("Customers");
+            builder.EntitySet<Store>("Stores");
+            builder.Function("GetBestProduct").ReturnsFromEntitySet<Product>("Products");
+            builder.Action("RemoveWorstProduct").ReturnsFromEntitySet<Product>("Products");
+        }
+    }
     class TestQueryExpressionSourcer : IQueryExpressionSourcer
     {
         public Expression ReplaceQueryableSource(QueryExpressionContext context, bool embedded)

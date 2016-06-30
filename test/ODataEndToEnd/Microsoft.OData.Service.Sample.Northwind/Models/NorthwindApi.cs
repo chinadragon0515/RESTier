@@ -60,7 +60,7 @@ namespace Microsoft.OData.Service.Sample.Northwind.Models
         protected override IServiceCollection ConfigureApi(IServiceCollection services)
         {
             return base.ConfigureApi(services)
-                .AddService<IModelBuilder, NorthwindModelExtender>();
+                .AddSingleton<IModelBuilder, NorthwindModelExtender>();
         }
 
         // Entity set filter
@@ -85,13 +85,11 @@ namespace Microsoft.OData.Service.Sample.Northwind.Models
             // Fake writing log method for submit logic demo
         }
 
-        private class NorthwindModelExtender : IModelBuilder
+        private class NorthwindModelExtender : RestierModelBuilder
         {
-            public IModelBuilder InnerHandler { get; set; }
-
-            public async Task<IEdmModel> GetModelAsync(ModelContext context, CancellationToken cancellationToken)
+            public override async Task<IEdmModel> GetModelAsync(ModelContext context, CancellationToken cancellationToken)
             {
-                var model = await InnerHandler.GetModelAsync(context, cancellationToken);
+                var model = await base.GetModelAsync(context, cancellationToken);
 
                 // enable auto-expand through model annotation.
                 var orderType = (EdmEntityType)model.SchemaElements.Single(e => e.Name == "Order");

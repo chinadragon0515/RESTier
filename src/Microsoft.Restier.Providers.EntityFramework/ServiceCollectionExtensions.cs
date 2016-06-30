@@ -42,7 +42,7 @@ namespace Microsoft.Restier.Providers.EntityFramework
             });
 
             return services
-                .AddService<IModelBuilder, ModelProducer>()
+                .AddService<IModelPreparer, ModelPreparer>()
                 .AddService<IModelMapper>((sp, next) => new ModelMapper(typeof(TDbContext)))
                 .AddService<IQueryExpressionSourcer, QueryExpressionSourcer>()
                 .AddService<IQueryExecutor, QueryExecutor>()

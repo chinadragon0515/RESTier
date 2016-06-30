@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Web.OData.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OData.Edm;
 using Microsoft.OData.Edm.Library;
@@ -16,125 +17,189 @@ using Microsoft.Restier.Core.Model;
 
 namespace Microsoft.Restier.Publishers.OData.Model
 {
-    internal class RestierOperationModelBuilder : IModelBuilder
+    internal class RestierOperationModelBuilder
     {
         private readonly Type targetType;
         private readonly ICollection<OperationMethodInfo> operationInfos = new List<OperationMethodInfo>();
 
-        private RestierOperationModelBuilder(Type targetType)
+        internal RestierOperationModelBuilder(Type targetType)
         {
             this.targetType = targetType;
         }
 
-        private IModelBuilder InnerHandler { get; set; }
-
-        public static void ApplyTo(IServiceCollection services, Type targetType)
+        public void BuildModelForOperation(ODataConventionModelBuilder builder)
         {
-            services.AddService<IModelBuilder>((sp, next) => new RestierOperationModelBuilder(targetType)
-            {
-                InnerHandler = next,
-            });
-        }
-
-        public async Task<IEdmModel> GetModelAsync(ModelContext context, CancellationToken cancellationToken)
-        {
-            EdmModel model = null;
-            if (this.InnerHandler != null)
-            {
-                model = await this.InnerHandler.GetModelAsync(context, cancellationToken) as EdmModel;
-            }
-
-            if (model == null)
-            {
-                // We don't plan to extend an empty model with operations.
-                return null;
-            }
-
             this.ScanForOperations();
-
-            string existingNamespace = null;
-            if (model.DeclaredNamespaces != null)
-            {
-                existingNamespace = model.DeclaredNamespaces.FirstOrDefault();
-            }
-
-            this.BuildOperations(model, existingNamespace);
-            return model;
+            this.BuildOperations(builder);
         }
 
-        private static void BuildOperationParameters(EdmOperation operation, MethodInfo method, IEdmModel model)
+        private static void AddParameters(ProcedureConfiguration operationConfiguration, OperationMethodInfo methodInfo)
         {
-            foreach (ParameterInfo parameter in method.GetParameters())
+            // TODO ProcedureConfiguration is changed to OperationConfiguration in Web Api OData 6.x
+            var parameters = methodInfo.Method.GetParameters();
+            int index = 0;
+            if (methodInfo.IsBound)
             {
-                var parameterTypeReference = parameter.ParameterType.GetTypeReference(model);
-                var operationParam = new EdmOperationParameter(
-                    operation,
-                    parameter.Name,
-                    parameterTypeReference);
+                index = 1;
+            }
 
-                operation.AddParameter(operationParam);
+            for (; index < parameters.Length; index++)
+            {
+                var parameterType = parameters[index].ParameterType;
+
+                var genericType = parameterType.FindGenericType(typeof(IEnumerable<>));
+                if (genericType == null)
+                {
+                    operationConfiguration.Parameter(parameters[index].ParameterType, parameters[index].Name);
+                }
+                else
+                {
+                    // Collection parameters need to use CollectionParameter method to add
+                    var elementType = genericType.GenericTypeArguments[0];
+                    var method = EdmHelpers.CollectionParameterMethod.MakeGenericMethod(elementType);
+                    method.Invoke(operationConfiguration, new object[] { parameters[index].Name });
+                }
+            }
+
+            if (methodInfo.Namespace != null)
+            {
+                operationConfiguration.Namespace = methodInfo.Namespace;
             }
         }
 
-        private static EdmPathExpression BuildEntitySetPathExpression(
-            IEdmTypeReference returnTypeReference, ParameterInfo bindingParameter)
+        private static void AddFunctionReturn(
+            FunctionConfiguration functionConfiguration,
+            Type returnType,
+            ODataConventionModelBuilder builder,
+            string entitysetName)
         {
-            // Bound actions or functions that return an entity or a collection of entities
-            // MAY specify a value for the EntitySetPath attribute
-            // if determination of the entity set for the return type is contingent on the binding parameter.
-            // The value for the EntitySetPath attribute consists of a series of segments
-            // joined together with forward slashes.
-            // The first segment of the entity set path MUST be the name of the binding parameter.
-            // The remaining segments of the entity set path MUST represent navigation segments or type casts.
-            if (returnTypeReference != null &&
-                returnTypeReference.IsEntity() &&
-                bindingParameter != null)
+            if (returnType == typeof(void))
             {
-                return new EdmPathExpression(bindingParameter.Name);
+                return;
             }
 
-            return null;
+            var genericType = returnType.FindGenericType(typeof(IEnumerable<>));
+            if (genericType == null)
+            {
+                var returnTypeConfiguration = builder.GetTypeConfigurationOrNull(returnType);
+                if (returnTypeConfiguration == null || !(returnTypeConfiguration is EntityTypeConfiguration))
+                {
+                    // returns method is not in class OperationConfiguration
+                    functionConfiguration.Returns(returnType);
+                    return;
+                }
+
+                entitysetName = FindEntitySetName(builder, returnType, entitysetName);
+                if (entitysetName == null)
+                {
+                    // Will not add the return value here
+                    return;
+                }
+
+                var method = EdmHelpers.FunctionReturnsFromEntitySetMethod.MakeGenericMethod(returnType);
+                method.Invoke(functionConfiguration, new[] { entitysetName });
+            }
+            else
+            {
+                // Collection returns need to use ReturnsCollection method
+                var elementType = genericType.GenericTypeArguments[0];
+
+                var returnTypeConfiguration = builder.GetTypeConfigurationOrNull(elementType);
+                if (returnTypeConfiguration == null || !(returnTypeConfiguration is EntityTypeConfiguration))
+                {
+                    var method = EdmHelpers.FunctionReturnsCollectionMethod.MakeGenericMethod(elementType);
+                    method.Invoke(functionConfiguration, null);
+                    return;
+                }
+
+                entitysetName = FindEntitySetName(builder, elementType, entitysetName);
+                if (entitysetName == null)
+                {
+                    // Will not add the return value here
+                    return;
+                }
+
+                var method2 = EdmHelpers.FunctionReturnsCollectionFromEntitySetMethod.MakeGenericMethod(elementType);
+                method2.Invoke(functionConfiguration, new object[] { entitysetName });
+            }
         }
 
-        private static EdmEntitySetReferenceExpression BuildEntitySetReferenceExpression(
-            IEdmModel model, string entitySetName, IEdmTypeReference returnTypeReference)
+        private static void AddActionReturn(
+            ActionConfiguration actionConfiguration,
+            Type returnType,
+            ODataConventionModelBuilder builder,
+            string entitysetName)
         {
-            IEdmEntitySet entitySet = null;
-            if (entitySetName != null)
+            if (returnType == typeof(void))
             {
-                entitySet = model.EntityContainer.FindEntitySet(entitySetName);
+                return;
             }
 
-            if (entitySet == null && returnTypeReference != null)
+            var genericType = returnType.FindGenericType(typeof(IEnumerable<>));
+            if (genericType == null)
             {
-                entitySet = model.FindDeclaredEntitySetByTypeReference(returnTypeReference);
-            }
+                var returnTypeConfiguration = builder.GetTypeConfigurationOrNull(returnType);
+                if (returnTypeConfiguration == null || !(returnTypeConfiguration is EntityTypeConfiguration))
+                {
+                    // returns method is not in class OperationConfiguration
+                    actionConfiguration.Returns(returnType);
+                    return;
+                }
 
-            if (entitySet != null)
+                entitysetName = FindEntitySetName(builder, returnType, entitysetName);
+                if (entitysetName == null)
+                {
+                    // Will not add the return value here
+                    return;
+                }
+
+                var method = EdmHelpers.ActionReturnsFromEntitySetMethod.MakeGenericMethod(returnType);
+                method.Invoke(actionConfiguration, new object[] { entitysetName });
+            }
+            else
             {
-                return new EdmEntitySetReferenceExpression(entitySet);
-            }
+                // Collection returns need to use ReturnsCollection method
+                var elementType = genericType.GenericTypeArguments[0];
 
-            return null;
+                var returnTypeConfiguration = builder.GetTypeConfigurationOrNull(elementType);
+                if (returnTypeConfiguration == null || !(returnTypeConfiguration is EntityTypeConfiguration))
+                {
+                    var method = EdmHelpers.ActionReturnsCollectionMethod.MakeGenericMethod(elementType);
+                    method.Invoke(actionConfiguration, null);
+                    return;
+                }
+
+                entitysetName = FindEntitySetName(builder, elementType, entitysetName);
+                if (entitysetName == null)
+                {
+                    // Will not add the return value here
+                    return;
+                }
+
+                var method2 = EdmHelpers.ActionReturnsCollectionFromEntitySetMethod.MakeGenericMethod(elementType);
+                method2.Invoke(actionConfiguration, new object[] { entitysetName });
+            }
         }
 
-        private static string GetNamespaceName(OperationMethodInfo methodInfo, string modelNamespace)
+        private static string FindEntitySetName(
+            ODataConventionModelBuilder builder, Type returnType, string entitysetName)
         {
-            // customized the namespace logic, customized namespace is P0
-            string namespaceName = methodInfo.OperationAttribute.Namespace;
-
-            if (namespaceName != null)
+            if (entitysetName != null)
             {
-                return namespaceName;
+                return entitysetName;
             }
 
-            if (modelNamespace != null)
+            // Need to find entity set name
+            foreach (var entitySet in builder.EntitySets)
             {
-                return modelNamespace;
+                if (entitySet.ClrType == returnType)
+                {
+                    entitysetName = entitySet.Name;
+                    break;
+                }
             }
 
-            // This returns defined class namespace
-            return methodInfo.Namespace;
+            return entitysetName;
         }
 
         private void ScanForOperations()
@@ -159,13 +224,10 @@ namespace Microsoft.Restier.Publishers.OData.Model
             }
         }
 
-        private void BuildOperations(EdmModel model, string modelNamespace)
+        private void BuildOperations(ODataConventionModelBuilder builder)
         {
             foreach (OperationMethodInfo operationMethodInfo in this.operationInfos)
             {
-                // With this method, if return type is nullable type,it will get underlying type
-                var returnType = TypeHelper.GetUnderlyingTypeOrSelf(operationMethodInfo.Method.ReturnType);
-                var returnTypeReference = returnType.GetReturnTypeReference(model);
                 bool isBound = operationMethodInfo.IsBound;
                 var bindingParameter = operationMethodInfo.Method.GetParameters().FirstOrDefault();
 
@@ -175,55 +237,96 @@ namespace Microsoft.Restier.Publishers.OData.Model
                     continue;
                 }
 
-                string namespaceName = GetNamespaceName(operationMethodInfo, modelNamespace);
+                var returnType = operationMethodInfo.Method.ReturnType;
 
-                EdmOperation operation = null;
-                EdmPathExpression path = null;
-                if (isBound)
+                if (!isBound && !operationMethodInfo.HasSideEffects)
                 {
-                    // Unbound actions or functions should not have EntitySetPath attribute
-                    path = BuildEntitySetPathExpression(returnTypeReference, bindingParameter);
+                    // Unbound function
+                    var functionConfiguration = builder.Function(operationMethodInfo.Name);
+                    if (operationMethodInfo.IsComposable)
+                    {
+                        functionConfiguration.IsComposable = true;
+                    }
+
+                    AddParameters(functionConfiguration, operationMethodInfo);
+                    AddFunctionReturn(functionConfiguration, returnType, builder, operationMethodInfo.EntitySet);
                 }
-
-                if (operationMethodInfo.HasSideEffects)
+                else if (!isBound && operationMethodInfo.HasSideEffects)
                 {
-                    operation = new EdmAction(
-                        namespaceName,
-                        operationMethodInfo.Name,
-                        returnTypeReference,
-                        isBound,
-                        path);
+                    // Unbound action
+                    var actionConfiguration = builder.Action(operationMethodInfo.Name);
+                    AddParameters(actionConfiguration, operationMethodInfo);
+                    AddActionReturn(actionConfiguration, returnType, builder, operationMethodInfo.EntitySet);
                 }
                 else
                 {
-                    operation = new EdmFunction(
-                        namespaceName,
-                        operationMethodInfo.Name,
-                        returnTypeReference,
-                        isBound,
-                        path,
-                        operationMethodInfo.IsComposable);
-                }
-
-                BuildOperationParameters(operation, operationMethodInfo.Method, model);
-                model.AddElement(operation);
-
-                if (!isBound)
-                {
-                    // entitySetReferenceExpression refer to an entity set containing entities returned
-                    // by this function/action import.
-                    var entitySetReferenceExpression = BuildEntitySetReferenceExpression(
-                        model, operationMethodInfo.EntitySet, returnTypeReference);
-                    var entityContainer = model.EnsureEntityContainer(this.targetType);
-                    if (operationMethodInfo.HasSideEffects)
+                    // Bound operation
+                    var bindingType = bindingParameter.ParameterType;
+                    var boundCollection = false;
+                    var genericType = bindingType.FindGenericType(typeof(IEnumerable<>));
+                    if (genericType != null)
                     {
-                        entityContainer.AddActionImport(
-                            operation.Name, (EdmAction)operation, entitySetReferenceExpression);
+                        boundCollection = true;
+                        bindingType = genericType.GenericTypeArguments[0];
+                    }
+
+                    var typeConfiguration = builder.GetTypeConfigurationOrNull(bindingType);
+                    var entityTypeConfiguration = typeConfiguration as EntityTypeConfiguration;
+                    if (entityTypeConfiguration == null)
+                    {
+                        // OData conversion module builder does not support operation bound to non-entity type now
+                        continue;
+                    }
+
+                    var configGenericType = typeof(EntityTypeConfiguration<>).MakeGenericType(bindingType);
+                    var constructor = configGenericType.GetConstructor(
+                        BindingFlags.NonPublic | BindingFlags.Instance,
+                        null,
+                        new[] { typeof(ODataModelBuilder), typeof(EntityTypeConfiguration) },
+                        null);
+                    var genericEntityTypeConfiguration =
+                        constructor.Invoke(new object[] { builder, entityTypeConfiguration });
+
+                    var typeContainedMethod = configGenericType;
+                    var instanceCallMethod = genericEntityTypeConfiguration;
+                    if (boundCollection)
+                    {
+                        instanceCallMethod =
+                            configGenericType.GetProperty("Collection").GetValue(genericEntityTypeConfiguration, null);
+                        typeContainedMethod = typeof(EntityCollectionConfiguration<>).MakeGenericType(bindingType);
+                    }
+
+                    if (!operationMethodInfo.HasSideEffects)
+                    {
+                        var functionMethod = typeContainedMethod.GetMethod("Function");
+                        var functionConfiguration =
+                            functionMethod.Invoke(instanceCallMethod, new object[] { operationMethodInfo.Name }) as
+                                FunctionConfiguration;
+
+                        if (functionConfiguration != null)
+                        {
+                            if (operationMethodInfo.IsComposable)
+                            {
+                                functionConfiguration.IsComposable = true;
+                            }
+
+                            AddParameters(functionConfiguration, operationMethodInfo);
+                            AddFunctionReturn(
+                                functionConfiguration, returnType, builder, operationMethodInfo.EntitySet);
+                        }
                     }
                     else
                     {
-                        entityContainer.AddFunctionImport(
-                            operation.Name, (EdmFunction)operation, entitySetReferenceExpression);
+                        var actionMethod = typeContainedMethod.GetMethod("Action");
+                        var actionConfiguration = actionMethod.Invoke(
+                            instanceCallMethod,
+                            new object[] { operationMethodInfo.Name }) as ActionConfiguration;
+
+                        if (actionConfiguration != null)
+                        {
+                            AddParameters(actionConfiguration, operationMethodInfo);
+                            AddActionReturn(actionConfiguration, returnType, builder, operationMethodInfo.EntitySet);
+                        }
                     }
                 }
             }
@@ -242,7 +345,7 @@ namespace Microsoft.Restier.Publishers.OData.Model
 
             public string Namespace
             {
-                get { return this.OperationAttribute.Namespace ?? this.Method.DeclaringType.Namespace; }
+                get { return this.OperationAttribute.Namespace; }
             }
 
             public string EntitySet

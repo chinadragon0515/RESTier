@@ -97,7 +97,7 @@ namespace Microsoft.Restier.Publishers.OData.Test
     {
         protected override IServiceCollection ConfigureApi(IServiceCollection services)
         {
-            services.AddService<IModelBuilder>((sp, next) => new TestModelProducer(FallbackModel.Model));
+            services.AddSingleton<IModelBuilder>(new TestModelProducer());
             services.AddService<IModelMapper>((sp, next) => new FallbackModelMapper());
             services.AddService<IQueryExpressionSourcer>((sp, next) => new FallbackQueryExpressionSourcer());
             services = base.ConfigureApi(services);

@@ -25,10 +25,8 @@ namespace Microsoft.Restier.Providers.EntityFramework
     /// Represents a model producer that uses the
     /// metadata workspace accessible from a DbContext.
     /// </summary>
-    internal class ModelProducer : IModelBuilder
+    internal class ModelPreparer : IModelPreparer
     {
-        public IModelBuilder InnerModelBuilder { get; set; }
-
         /// <summary>
         /// This class will not real build a model, but only get entity set name and entity map from data source
         /// Then pass the information to publisher layer to build the model.
@@ -42,7 +40,7 @@ namespace Microsoft.Restier.Providers.EntityFramework
         /// <returns>
         /// Always a null model.
         /// </returns>
-        public Task<IEdmModel> GetModelAsync(ModelContext context, CancellationToken cancellationToken)
+        public Task PrepareModelAsync(ModelContext context, CancellationToken cancellationToken)
         {
             Ensure.NotNull(context, "context");
 
@@ -85,12 +83,8 @@ namespace Microsoft.Restier.Providers.EntityFramework
             context.ResourceSetTypeMap = resourceSetTypeMap;
             context.ResourceTypeKeyPropertiesMap = resourceTypeKeyPropertiesMap;
 #endif
-            if (InnerModelBuilder != null)
-            {
-                return InnerModelBuilder.GetModelAsync(context, cancellationToken);
-            }
 
-            return Task.FromResult<IEdmModel>(null);
+            return Task.WhenAll();
         }
     }
 }

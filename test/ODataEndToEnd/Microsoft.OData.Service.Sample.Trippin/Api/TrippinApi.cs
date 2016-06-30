@@ -224,7 +224,7 @@ namespace Microsoft.OData.Service.Sample.Trippin.Api
         {
             return null;
         }
-
+        
         [Operation(Namespace = "Microsoft.OData.Service.Sample.Trippin.Models", HasSideEffects = true)]
         public Location ActionComplex(Location l)
         {
@@ -573,12 +573,11 @@ namespace Microsoft.OData.Service.Sample.Trippin.Api
                 MaxExpansionDepth = 3
             };
 
-            services.AddService<IModelBuilder, TrippinModelExtender>();
-
             return base.ConfigureApi(services)
                 .AddSingleton<ODataPayloadValueConverter, CustomizedPayloadValueConverter>()
                 .AddSingleton<ODataValidationSettings>(validationSettingFactory)
                 .AddSingleton<IODataPathHandler, PathAndSlashEscapeODataPathHandler>()
+<<<<<<< 36da89f1a3226576a9507d2f6a80b521320ccf52
                 .AddService<IChangeSetItemFilter, CustomizedSubmitFilter>()
                 .AddService<IModelBuilder, TrippinModelCustomizer>();
         }
@@ -592,15 +591,17 @@ namespace Microsoft.OData.Service.Sample.Trippin.Api
                 builder.EntityType<PersonWithAge>();
                 return Task.FromResult(builder.GetEdmModel());
             }
+=======
+                .AddService<IChangeSetItemProcessor, CustomizedSubmitProcessor>()
+                .AddSingleton<IModelBuilder, TrippinModelCustomizer>();
+>>>>>>> Temp design, not ready for push yet
         }
 
-        private class TrippinModelCustomizer : IModelBuilder
+        private class TrippinModelCustomizer : RestierModelBuilder
         {
-            public IModelBuilder InnerHandler { get; set; }
-
-            public async Task<IEdmModel> GetModelAsync(ModelContext context, CancellationToken cancellationToken)
+            public override async Task<IEdmModel> GetModelAsync(ModelContext context, CancellationToken cancellationToken)
             {
-                var model = await InnerHandler.GetModelAsync(context, cancellationToken);
+                var model = await base.GetModelAsync(context, cancellationToken);
 
                 var trueConstant = new EdmBooleanConstant(true);
 
@@ -644,6 +645,12 @@ namespace Microsoft.OData.Service.Sample.Trippin.Api
                 }
 
                 return model;
+            }
+
+            public override void BuildEntityTypeEntitySetModel(ModelContext context, ODataConventionModelBuilder builder)
+            {
+                base.BuildEntityTypeEntitySetModel(context, builder);
+                builder.EntityType<PersonWithAge>();
             }
         }
     }

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Http;
+using System.Web.OData.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OData.Edm;
 using Microsoft.OData.Edm.Library;
@@ -141,36 +142,14 @@ namespace Microsoft.Restier.Publishers.OData.Test.Model
         }
     }
 
-    public class TestModelBuilder : IModelBuilder
+    public class TestModelBuilder : RestierModelBuilder
     {
-        public Task<IEdmModel> GetModelAsync(ModelContext context, CancellationToken cancellationToken)
+        public override void BuildEntityTypeEntitySetModel(ModelContext context, ODataConventionModelBuilder builder)
         {
-            var model = new EdmModel();
-            var ns = typeof(Person).Namespace;
-            var personType = new EdmEntityType(ns, "Person");
-            personType.AddKeys(personType.AddStructuralProperty("PersonId", EdmPrimitiveTypeKind.Int32));
-            model.AddElement(personType);
-            var customerType = new EdmEntityType(ns, "Customer");
-            customerType.AddKeys(customerType.AddStructuralProperty("CustomerId", EdmPrimitiveTypeKind.Int32));
-            customerType.AddUnidirectionalNavigation(new EdmNavigationPropertyInfo
-            {
-                Name = "Friends",
-                Target = personType,
-                TargetMultiplicity = EdmMultiplicity.Many
-            });
-            customerType.AddUnidirectionalNavigation(new EdmNavigationPropertyInfo
-            {
-                Name = "BestFriend",
-                Target = personType,
-                TargetMultiplicity = EdmMultiplicity.One
-            });
-            model.AddElement(customerType);
-            var vipCustomerType = new EdmEntityType(ns, "VipCustomer", customerType);
-            model.AddElement(vipCustomerType);
-            var container = new EdmEntityContainer(ns, "DefaultContainer");
-            container.AddEntitySet("VipCustomers", vipCustomerType);
-            model.AddElement(container);
-            return Task.FromResult<IEdmModel>(model);
+            base.BuildEntityTypeEntitySetModel(context, builder);
+            builder.EntityType<Person>();
+            builder.EntityType<Customer>();
+            builder.EntitySet<VipCustomer>("VipCustomers");
         }
     }
 
@@ -212,7 +191,7 @@ namespace Microsoft.Restier.Publishers.OData.Test.Model
 
         protected override IServiceCollection ConfigureApi(IServiceCollection services)
         {
-            services.AddService<IModelBuilder>((sp, next) => new TestModelBuilder());
+            services.AddSingleton<IModelBuilder>(new TestModelBuilder());
             return base.ConfigureApi(services);
         }
     }
@@ -259,7 +238,7 @@ namespace Microsoft.Restier.Publishers.OData.Test.Model
 
         protected override IServiceCollection ConfigureApi(IServiceCollection services)
         {
-            services.AddService<IModelBuilder>((sp, next) => new TestModelBuilder());
+            services.AddSingleton<IModelBuilder>(new TestModelBuilder());
             return base.ConfigureApi(services);
         }
     }
@@ -270,7 +249,7 @@ namespace Microsoft.Restier.Publishers.OData.Test.Model
 
         protected override IServiceCollection ConfigureApi(IServiceCollection services)
         {
-            services.AddService<IModelBuilder>((sp, next) => new TestModelBuilder());
+            services.AddSingleton<IModelBuilder>(new TestModelBuilder());
             return base.ConfigureApi(services);
         }
     }
@@ -288,7 +267,7 @@ namespace Microsoft.Restier.Publishers.OData.Test.Model
 
         protected override IServiceCollection ConfigureApi(IServiceCollection services)
         {
-            services.AddService<IModelBuilder>((sp, next) => new TestModelBuilder());
+            services.AddSingleton<IModelBuilder>(new TestModelBuilder());
             return base.ConfigureApi(services);
         }
     }

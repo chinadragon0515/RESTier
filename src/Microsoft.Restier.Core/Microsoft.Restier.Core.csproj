@@ -80,6 +80,7 @@
     <Compile Include="InvocationContext.cs" />
     <Compile Include="InvocationContextExtensions.cs" />
     <Compile Include="Model\EdmHelpers.cs" />
+    <Compile Include="Model\IModelPreparer.cs" />
     <Compile Include="Model\ModelContext.cs" />
     <Compile Include="Operation\IOperationFilter.cs" />
     <Compile Include="Operation\IOperationAuthorizer.cs" />

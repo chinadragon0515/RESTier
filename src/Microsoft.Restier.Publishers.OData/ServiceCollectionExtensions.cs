@@ -39,9 +39,8 @@ namespace Microsoft.Restier.Publishers.OData
                 return services;
             }
 
-            services.AddService<IModelBuilder, RestierModelBuilder>();
             RestierModelExtender.ApplyTo(services, typeof(T));
-            RestierOperationModelBuilder.ApplyTo(services, typeof(T));
+            services.TryAddSingleton<IModelBuilder, RestierModelBuilder>();
 
             // Add OData Query Settings and validation settings
             Func<IServiceProvider, ODataQuerySettings> querySettingFactory = (sp) => new ODataQuerySettings
