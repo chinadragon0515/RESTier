@@ -49,10 +49,6 @@
       <HintPath>..\..\packages\Microsoft.AspNet.WebApi.Core.5.2.3\lib\net45\System.Web.Http.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="System.Web.OData, Version=5.9.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Microsoft.AspNet.OData.5.9.0\lib\net45\System.Web.OData.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
@@ -139,6 +135,10 @@
     <Compile Include="Model\EdmHelpers.cs" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\..\WebAPI.Vin\OData\src\System.Web.OData\System.Web.OData.csproj">
+      <Project>{d23e28f1-ccd0-43e0-8c0d-36731ec91318}</Project>
+      <Name>System.Web.OData</Name>
+    </ProjectReference>
     <ProjectReference Include="..\Microsoft.Restier.Core\Microsoft.Restier.Core.csproj">
       <Project>{f1beab8d-82d4-4bbb-a5c6-ba0e6872e508}</Project>
       <Name>Microsoft.Restier.Core</Name>

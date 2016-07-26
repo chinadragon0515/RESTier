@@ -47,12 +47,7 @@ namespace Microsoft.Restier.Providers.MongoDB.Query
             // IMongoQueryProvider is an internal class 
             if (query.Provider.GetType().Name == "MongoQueryProviderImpl`1")
             {
-                var temp = query.Expression as MethodCallExpression;
-                var lambda = GetLambda(temp.Arguments[1]);
-                var name = lambda.Parameters[0].Name;
-
                 var iqueryableResult = query.ToArray();
-                var iqueryableResult2 = query.ToList();
                 var result = new QueryResult(iqueryableResult);
                 return result;
             }
@@ -60,18 +55,6 @@ namespace Microsoft.Restier.Providers.MongoDB.Query
            return await Inner.ExecuteQueryAsync(context, query, cancellationToken);
         }
 
-        public static LambdaExpression GetLambda(Expression node)
-        {
-            return (LambdaExpression)StripQuotes(node);
-        }
-        private static Expression StripQuotes(Expression expression)
-        {
-            while (expression.NodeType == ExpressionType.Quote)
-            {
-                expression = ((UnaryExpression)expression).Operand;
-            }
-            return expression;
-        }
         /// <summary>
         /// Asynchronously executes a singleton
         /// query and produces a query result.
