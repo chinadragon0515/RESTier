@@ -302,18 +302,38 @@ namespace Microsoft.Restier.Core.Query
                         // point for the entire composed query, and thus
                         // it should produce a non-embedded expression.
                         var constant = node as ConstantExpression;
-                        if (constant == null)
-                        {
-                            throw new NotSupportedException(Resources.OriginalExpressionShouldBeConstant);
-                        }
 
-                        this.BaseQuery = constant.Value as IQueryable;
-                        if (this.BaseQuery == null)
-                        {
-                            throw new NotSupportedException(Resources.OriginalExpressionShouldBeQueryable);
-                        }
+                        // TODO ....
 
-                        node = this.BaseQuery.Expression;
+                        if (constant != null)
+                        {
+                            this.BaseQuery = constant.Value as IQueryable;
+                            if (this.BaseQuery == null)
+                            {
+                                throw new NotSupportedException(Resources.OriginalExpressionShouldBeQueryable);
+                            }
+
+                            node = this.BaseQuery.Expression;
+                        }
+                        else
+                        {
+                            var call = node as MethodCallExpression;
+                            if (call != null)
+                            {
+                                // Need to set BaseQuery to a IQueryable
+                                // TODO This mean it is a call for MongoDB
+                                // this.BaseQuery = call.
+                                this.BaseQuery = Expression.Lambda(call).Compile().DynamicInvoke() as IQueryable;
+                                //var func = call.Compile();
+                                //var success = func.Invoke();
+
+                            }
+                            else
+                            {
+                                // TODO, need to update the message
+                                throw new NotSupportedException(Resources.OriginalExpressionShouldBeConstant);
+                            }
+                        }
                     }
                 }
 

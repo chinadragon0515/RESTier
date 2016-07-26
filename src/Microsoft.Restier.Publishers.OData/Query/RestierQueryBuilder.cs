@@ -29,6 +29,7 @@ namespace Microsoft.Restier.Publishers.OData.Query
         private IQueryable queryable;
         private IEdmEntityType currentEntityType;
         private Type currentType;
+        private int parameterIndex;
 
         public RestierQueryBuilder(ApiBase api, ODataPath path)
         {
@@ -36,6 +37,7 @@ namespace Microsoft.Restier.Publishers.OData.Query
             Ensure.NotNull(path, "path");
             this.api = api;
             this.path = path;
+            this.parameterIndex = 0;
 
             this.handlers[ODataSegmentKinds.EntitySet] = this.HandleEntitySetPathSegment;
             this.handlers[ODataSegmentKinds.Singleton] = this.HandleSingletonPathSegment;
@@ -213,7 +215,8 @@ namespace Microsoft.Restier.Publishers.OData.Query
         {
             var keySegment = (KeyValuePathSegment)segment;
 
-            var parameterExpression = Expression.Parameter(this.currentType, DefaultNameOfParameterExpression);
+            var parameterName = DefaultNameOfParameterExpression + (parameterIndex++);
+            var parameterExpression = Expression.Parameter(this.currentType, parameterName);
             var keyValues = GetPathKeyValues(keySegment, this.currentEntityType);
 
             BinaryExpression keyFilter = null;
@@ -231,7 +234,9 @@ namespace Microsoft.Restier.Publishers.OData.Query
         private void HandleNavigationPathSegment(ODataPathSegment segment)
         {
             var navigationSegment = (NavigationPathSegment)segment;
-            var entityParameterExpression = Expression.Parameter(this.currentType);
+
+            var parameterName = DefaultNameOfParameterExpression + (parameterIndex++);
+            var entityParameterExpression = Expression.Parameter(this.currentType, parameterName);
             var navigationPropertyExpression =
                 Expression.Property(entityParameterExpression, navigationSegment.NavigationPropertyName);
 
@@ -269,7 +274,9 @@ namespace Microsoft.Restier.Publishers.OData.Query
         private void HandlePropertyAccessPathSegment(ODataPathSegment segment)
         {
             var propertySegment = (PropertyAccessPathSegment)segment;
-            var entityParameterExpression = Expression.Parameter(this.currentType);
+
+            var parameterName = DefaultNameOfParameterExpression + (parameterIndex++);
+            var entityParameterExpression = Expression.Parameter(this.currentType, parameterName);
             var structuralPropertyExpression =
                 Expression.Property(entityParameterExpression, propertySegment.PropertyName);
 
